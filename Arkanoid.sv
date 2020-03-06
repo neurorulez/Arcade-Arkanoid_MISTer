@@ -90,12 +90,20 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
+	output        USER_OSD,	
+	output        USER_MODE,
 	input   [6:0] USER_IN,
 	output  [6:0] USER_OUT
 );
 
 assign VGA_F1    = 0;
-assign USER_OUT  = '1;
+
+wire   JOY_CLK, JOY_LOAD;
+wire   JOY_DATA  = USER_IN[5];
+assign USER_OUT  = |status[31:30] ? {5'b11111,JOY_CLK,JOY_LOAD} : '1;
+assign USER_MODE = |status[31:30] ;
+assign USER_OSD  = joydb15_1[10] & joydb15_1[6];
+
 
 assign LED_USER  = ioctl_download;
 assign LED_DISK  = 0;
@@ -110,6 +118,7 @@ parameter CONF_STR = {
 	"H0OE,Aspect Ratio,Original,Wide;",
 	"H0OD,Orientation,Vert,Horz;",
 	"OFH,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"OUV,Serial SNAC DB15,Off,1 Player,2 Players;",	
 	"-;",
 	"D1OK,Pad Control,Kbd/Joy/Mouse,Spinner;",
 	"D1OIJ,Spinner Resolution,High,Medium,Low;",
@@ -143,7 +152,7 @@ wire  [7:0] ioctl_dout;
 
 wire [10:0] ps2_key;
 wire [24:0] ps2_mouse;
-wire [31:0] joystick_0, joystick_1;
+wire [31:0] joystick_0_USB, joystick_1_USB;
 wire [31:0] joy = joystick_0 | joystick_1;
 wire [15:0] joystick_analog_0, joystick_analog_1;
 wire  [7:0] joya = joystick_analog_0[7:0] ? joystick_analog_0[7:0] : joystick_analog_1[7:0];
@@ -151,6 +160,22 @@ wire  [7:0] joya = joystick_analog_0[7:0] ? joystick_analog_0[7:0] : joystick_an
 wire [21:0] gamma_bus;
 
 wire  [8:0] sp0, sp1;
+
+wire [31:0] joystick_0 = |status[31:30] ? {joydb15_1[7],joydb15_1[11],joydb15_1[10],joydb15_1[5:0]} : joystick_0_USB;
+wire [31:0] joystick_1 =  status[31]    ? {joydb15_2[10],joydb15_2[11],joydb15_2[7],joydb15_2[5:0]} : status[30] ? joystick_0_USB : joystick_1_USB;
+
+//----BA 9876543210
+//----LS FEDCBAUDLR
+reg [15:0] joydb15_1,joydb15_2;
+joy_db15 joy_db15
+(
+  .clk       ( CLK_48M   ), //48MHz
+  .JOY_CLK   ( JOY_CLK   ),
+  .JOY_DATA  ( JOY_DATA  ),
+  .JOY_LOAD  ( JOY_LOAD  ),
+  .joystick1 ( joydb15_1 ),
+  .joystick2 ( joydb15_2 )	  
+);
 
 hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 (
@@ -170,9 +195,11 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
+	
+	.joy_raw(joydb15_1[5:0]),
 
-	.joystick_0(joystick_0),
-	.joystick_1(joystick_1),
+	.joystick_0(joystick_0_USB),
+	.joystick_1(joystick_1_USB),
 	.joystick_analog_0(joystick_analog_0),
 	.joystick_analog_1(joystick_analog_1),
 	.spinner_0(sp0),
@@ -205,7 +232,7 @@ reg use_io = 0; // 1 - use encoder on USER_IN[1:0] pins
 always @(posedge CLK_12M) begin
 	reg [15:0] spin_counter;
 	reg        old_state;
-	reg  [1:0] old_io;
+	reg  [1:0] old_io, new_io;
 	reg [11:0] position = 0;
 	reg        ce_6m;
 	reg [11:0] div_4k;
@@ -297,17 +324,17 @@ always @(posedge CLK_12M) begin
 			spin_counter <= 0;
 		end
 	end
-
-	old_io <= USER_IN[1:0];
-	if(old_io != USER_IN[1:0]) use_io <= 1;
+    new_io <= ~USER_MODE ? USER_IN[1:0] : joydb15_2[9:8];
+	old_io <= new_io; 
+	if(old_io != new_io) use_io <= 1;
 end
 
 //Process to downgrade encoder pulses from 600 to 300 (Arkanoid Encoder original dps)
 //We use a 600 pulses AB Digital encoder
 
 reg [1:0] raw_encoder = 2'b11;
-wire encA = USER_IN[0];
-wire encB = USER_IN[1];
+wire encA = ~USER_MODE ? USER_IN[0] : joydb15_2[8];
+wire encB = ~USER_MODE ? USER_IN[1] : joydb15_2[9];
 always @(posedge CLK_12M) begin
 	reg encAr;
 
@@ -361,7 +388,7 @@ end
 
 //////////////////  Arcade Buttons/Interfaces   ///////////////////////////
 
-wire m_fire   = btn_fire     | joy[4] | |ps2_mouse[1:0] | ~USER_IN[3];
+wire m_fire   = btn_fire     | joy[4] | |ps2_mouse[1:0] | ~USER_MODE ? ~USER_IN[3] : 1'b0;
 wire m_fast   = btn_fast     | joy[5];
 wire m_start1 = btn_1p_start | joy[6];
 wire m_start2 = btn_2p_start | joy[8];

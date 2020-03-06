@@ -38,3 +38,4 @@ set_global_assignment -name VHDL_FILE logic/ls374.vhd
 set_global_assignment -name VHDL_FILE logic/ls393.vhd
 set_global_assignment -name VHDL_FILE logic/ls669.vhd
 set_global_assignment -name VHDL_FILE logic/cmos_4584.vhd
+set_global_assignment -name VERILOG_FILE logic/joydb15.v
